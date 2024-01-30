@@ -21,14 +21,14 @@ import com.aeroncookbook.sbe.MessageHeaderEncoder;
 import com.aeroncookbook.sbe.SimpleMessageDecoder;
 import com.aeroncookbook.sbe.SimpleMessageEncoder;
 
-public class ServiceContainer implements ClusteredService {
+import aeron_cluster.domain.SimpleMessage;
 
+public class ServiceContainer implements ClusteredService {
     private static final Logger LOGGER = LoggerFactory.getLogger(ServiceContainer.class);
 
     final MessageHeaderDecoder headerDecoder = new MessageHeaderDecoder();
     final SimpleMessageDecoder decoder = new SimpleMessageDecoder();
     private UnsafeBuffer sendBuffer = new UnsafeBuffer(ByteBuffer.allocate(1024));
-
 
     @Override
     public void onStart(Cluster cluster, Image snapshotImage) {
@@ -46,28 +46,27 @@ public class ServiceContainer implements ClusteredService {
     }
 
     @Override
-    public void onSessionMessage(ClientSession session, long timestamp, DirectBuffer buffer, int offset, int length, Header header) {
-        LOGGER.info("ServiceContainer session message received");
-        headerDecoder.wrap(buffer, offset);        
+    public void onSessionMessage(ClientSession session, long timestamp, DirectBuffer buffer, int offset, int length,
+            Header header) {
+        headerDecoder.wrap(buffer, offset);
 
         int templateId = headerDecoder.templateId();
         switch (templateId) {
-            case SimpleMessageDecoder.TEMPLATE_ID -> {
-                decoder.wrapAndApplyHeader(buffer, offset, headerDecoder);
-                // NOTE: we need to get get sessionId first because SBE tool is dumb...
-                String sessionId = decoder.sessionId();
-                // THE actual business logic Goes here....
-                String reversed = new StringBuilder(decoder.message()).reverse().toString();
-
-                SimpleMessageEncoder encoder = new SimpleMessageEncoder()
-                    .wrapAndApplyHeader(sendBuffer, 0, new MessageHeaderEncoder())
-                    .sessionId(sessionId)
-                    .message(reversed);
-
-                session.offer(sendBuffer, 0, MessageHeaderEncoder.ENCODED_LENGTH + encoder.encodedLength());
-            }        
-            default -> LOGGER.warn("Unknown templateId: {}", templateId);
+            case SimpleMessageDecoder.TEMPLATE_ID -> simpleMessageHandler(session, buffer, offset);
+            default -> LOGGER.error("Unknown templateId: {}", templateId);
         }
+    }
+
+    void simpleMessageHandler(ClientSession session, DirectBuffer buffer, int offset) {
+        SimpleMessage message = SimpleMessage.decodeOutof(buffer, offset);
+        LOGGER.info("Received {}", message);
+        String reversed = new StringBuilder(message.message()).reverse().toString();
+        SimpleMessage.encodeInto(message.sessionId(), reversed, sendBuffer,
+                (SimpleMessage m, SimpleMessageEncoder encoder) -> {
+                    int encodedLength = MessageHeaderEncoder.ENCODED_LENGTH + encoder.encodedLength();
+                    session.offer(sendBuffer, 0, encodedLength);
+                    LOGGER.info("Sent {}", m);
+                });
     }
 
     @Override
