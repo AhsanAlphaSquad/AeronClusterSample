@@ -27,7 +27,8 @@ dependencies {
     implementation(libs.guava)
     implementation("io.aeron:aeron-all:1.43.0")
     "codecGeneration"("uk.co.real-logic:sbe-tool:1.30.0")
-
+    implementation("org.slf4j:slf4j-api:2.0.11")
+    implementation("ch.qos.logback:logback-classic:1.4.14")
 }
 
 // Apply a specific Java toolchain to ease working on different environments.
