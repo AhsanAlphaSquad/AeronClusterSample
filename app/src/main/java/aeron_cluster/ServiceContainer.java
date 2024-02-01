@@ -22,6 +22,7 @@ import com.aeroncookbook.sbe.SimpleMessageDecoder;
 import com.aeroncookbook.sbe.SimpleMessageEncoder;
 
 import aeron_cluster.domain.SimpleMessage;
+import aeron_cluster.domain.SimpleMessageStore;
 
 public class ServiceContainer implements ClusteredService {
     private static final Logger LOGGER = LoggerFactory.getLogger(ServiceContainer.class);
@@ -60,6 +61,9 @@ public class ServiceContainer implements ClusteredService {
     void simpleMessageHandler(ClientSession session, DirectBuffer buffer, int offset) {
         SimpleMessage message = SimpleMessage.decodeOutof(buffer, offset);
         LOGGER.info("Received {}", message);
+        
+        SimpleMessageStore.getInstance().put(message.sessionId(), message);
+
         String reversed = new StringBuilder(message.message()).reverse().toString();
         SimpleMessage.encodeInto(message.sessionId(), reversed, sendBuffer,
                 (SimpleMessage m, SimpleMessageEncoder encoder) -> {
