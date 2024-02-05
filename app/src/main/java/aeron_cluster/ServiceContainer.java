@@ -3,10 +3,12 @@ package aeron_cluster;
 import java.nio.ByteBuffer;
 
 import org.agrona.DirectBuffer;
+import org.agrona.concurrent.SleepingIdleStrategy;
 import org.agrona.concurrent.UnsafeBuffer;
 
 import io.aeron.ExclusivePublication;
 import io.aeron.Image;
+import io.aeron.Publication;
 import io.aeron.cluster.codecs.CloseReason;
 import io.aeron.cluster.service.ClientSession;
 import io.aeron.cluster.service.Cluster;
@@ -29,7 +31,7 @@ public class ServiceContainer implements ClusteredService {
 
     final MessageHeaderDecoder headerDecoder = new MessageHeaderDecoder();
     final SimpleMessageDecoder decoder = new SimpleMessageDecoder();
-    private UnsafeBuffer sendBuffer = new UnsafeBuffer(ByteBuffer.allocate(1024));
+    private UnsafeBuffer sendBuffer = new UnsafeBuffer(ByteBuffer.allocate(1024 * 1024));
 
     @Override
     public void onStart(Cluster cluster, Image snapshotImage) {
@@ -50,26 +52,48 @@ public class ServiceContainer implements ClusteredService {
     public void onSessionMessage(ClientSession session, long timestamp, DirectBuffer buffer, int offset, int length,
             Header header) {
         headerDecoder.wrap(buffer, offset);
+        
+        ClusterStatistics.messagesReceived++;
 
         int templateId = headerDecoder.templateId();
         switch (templateId) {
             case SimpleMessageDecoder.TEMPLATE_ID -> simpleMessageHandler(session, buffer, offset);
             default -> LOGGER.error("Unknown templateId: {}", templateId);
         }
+
+//        LOGGER.info("Statistics: Sent {}, Received {}", ClusterStatistics.messagesSent, ClusterStatistics.messagesReceived);
     }
 
     void simpleMessageHandler(ClientSession session, DirectBuffer buffer, int offset) {
         SimpleMessage message = SimpleMessage.decodeOutof(buffer, offset);
-//        LOGGER.info("Received {}", message);
-        
-        SimpleMessageStore.getInstance().put(message.sessionId(), message);
+        // LOGGER.info("Received {}", message);
+
+//        SimpleMessageStore.getInstance().put(message.sessionId(), message);
 
         String reversed = new StringBuilder(message.message()).reverse().toString();
         SimpleMessage.encodeInto(message.sessionId(), reversed, sendBuffer,
                 (SimpleMessage m, SimpleMessageEncoder encoder) -> {
+                    // NOTE: this should not be here
+                    SleepingIdleStrategy idleStrategy = new SleepingIdleStrategy();
                     int encodedLength = MessageHeaderEncoder.ENCODED_LENGTH + encoder.encodedLength();
-                    session.offer(sendBuffer, 0, encodedLength);
-//                    LOGGER.info("Sent {}", m);
+                    int retries = 0;
+                    int RETRY_COUNT = 3;
+                    do {
+                        final long result = session.offer(sendBuffer, 0, encodedLength);
+                        if (result > 0L) {
+                            ClusterStatistics.messagesSent++;
+                            return;
+                        } else if (result == Publication.ADMIN_ACTION || result == Publication.BACK_PRESSURED) {
+                            LOGGER.warn("backpressure or admin action on session offer");
+                        } else if (result == Publication.NOT_CONNECTED || result == Publication.MAX_POSITION_EXCEEDED) {
+                            LOGGER.error("unexpected state on session offer: {}", result);
+                        }
+
+                        idleStrategy.idle();
+                        retries += 1;
+                    } while (retries < RETRY_COUNT);
+
+                    LOGGER.error("failed to offer snapshot within {} retries. Closing client session.", RETRY_COUNT);
                 });
     }
 
