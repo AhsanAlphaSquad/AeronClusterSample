@@ -60,7 +60,7 @@ public class ServiceContainer implements ClusteredService {
 
     void simpleMessageHandler(ClientSession session, DirectBuffer buffer, int offset) {
         SimpleMessage message = SimpleMessage.decodeOutof(buffer, offset);
-        LOGGER.info("Received {}", message);
+//        LOGGER.info("Received {}", message);
         
         SimpleMessageStore.getInstance().put(message.sessionId(), message);
 
@@ -69,7 +69,7 @@ public class ServiceContainer implements ClusteredService {
                 (SimpleMessage m, SimpleMessageEncoder encoder) -> {
                     int encodedLength = MessageHeaderEncoder.ENCODED_LENGTH + encoder.encodedLength();
                     session.offer(sendBuffer, 0, encodedLength);
-                    LOGGER.info("Sent {}", m);
+//                    LOGGER.info("Sent {}", m);
                 });
     }
 
